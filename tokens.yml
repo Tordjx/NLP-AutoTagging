@@ -1,0 +1,43 @@
+---
+age:
+  start: Ⓐ
+  end: ''
+birth_date:
+  start: Ⓑ
+  end: ''
+civil_status:
+  start: Ⓒ
+  end: ''
+education_level:
+  start: Ⓓ
+  end: ''
+employer:
+  start: Ⓔ
+  end: ''
+firstname:
+  start: Ⓕ
+  end: ''
+link:
+  start: Ⓗ
+  end: ''
+lob:
+  start: Ⓘ
+  end: ''
+maiden_name:
+  start: Ⓙ
+  end: ''
+nationality:
+  start: Ⓚ
+  end: ''
+observation:
+  start: Ⓛ
+  end: ''
+occupation:
+  start: Ⓜ
+  end: ''
+surname:
+  start: Ⓞ
+  end: ''
+surname_household:
+  start: Ⓟ
+  end: ''
