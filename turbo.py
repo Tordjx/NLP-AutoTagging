@@ -1,4 +1,5 @@
 #%%
+from bpe import Encoder
 import json
 import pandas as pd
 
@@ -15,23 +16,18 @@ special_chars = list(special_char_dict.keys())
 pretty_names = list(special_char_dict.values())
 good_data= []
 import re
-vocab = {}
 def extract_data(result ,line, special_characters):
-    #IMMONDE : mais j'ai pas trouvé mieux
     current_char = None
     current_word = ""
     for letter in line :
         if letter in special_characters: 
             if current_char != None : 
                 result[current_char].append(current_word[:-1])
-                if current_word[:-1] not in vocab.keys() :
-                    vocab[current_word[:-1]] = len(vocab)
             current_char = letter
             current_word = ""
         else:
             current_word = current_word+letter
     return result
-#AJOUTER UN TOKENIZEER PAR PITIE
 nasty_data = {}
 for c in special_chars:
     nasty_data[c] = []
@@ -43,51 +39,171 @@ for k in data :
 
 # Replace keys in second_dict using the mapping
 pretty_data = {special_char_dict[key]: value for key, value in nasty_data.items()}
-pretty_data
 
-# %%
+#%%
+bpe_data = []
+for k in pretty_data.keys() :
+    bpe_data = bpe_data+ pretty_data[k]
+from bpe import Encoder
+encoder = Encoder()
+encoder.fit(bpe_data)
+tokenized_data = {key: list(encoder.transform(value)) for key, value in pretty_data.items()}
+#%%
+
+#%%
 import torch
 from torch.utils.data import Dataset, DataLoader
-class DictDataset(Dataset):
-    def __init__(self, data_dict):
-        self.data_dict = data_dict
-        self.classes = list(data_dict.keys())
-
+class DataFromDict(Dataset):
+    def __init__(self,input_dict ):
+        self.input_dict = input_dict
+        data = []
+        self.len = 0
+        for k in list(input_dict.keys()):
+            self.len +=len(input_dict[k])
+            print(len(input_dict[k]))
+            for v in input_dict[k]:
+                data.append((v,list(input_dict.keys()).index(k)))
+        self.data = data
     def __len__(self):
-        return sum(len(self.data_dict[class_name]) for class_name in self.classes)
+        return self.len
 
-    def __getitem__(self, idx):
-        class_idx = 0
-        while idx >= len(self.data_dict[self.classes[class_idx]]):
-            idx -= len(self.data_dict[self.classes[class_idx]])
-            class_idx += 1
-        class_name = self.classes[class_idx]
-        class_id = pretty_names.index(class_name)
-        return vocab[self.data_dict[class_name][idx]], class_id
+    def __getitem__(self,idx):
+        x,y = self.data[idx]
+        return torch.Tensor(x),torch.Tensor([y])
+full_dataset = DataFromDict(tokenized_data)
+print(len(full_dataset))
+# %%
 
-# Create a dataset instance
-full_dataset = DictDataset(pretty_data)
+from torch.nn.utils.rnn import pad_sequence
+class PadSequence:
+    def __call__(self, batch):
+        (xx, yy) = zip(*batch)
+        xx_pad = pad_sequence(xx, batch_first=True, padding_value=0)
+        return xx_pad.to(torch.int), torch.cat(yy).to(torch.int)
+
 train_size = int(0.8 * len(full_dataset))
 test_size = len(full_dataset) - train_size
-batch_size = 64
+batch_size = 512
 train_dataset, test_dataset = torch.utils.data.random_split(full_dataset, [train_size, test_size])# Create a DataLoader from the dataset
-train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=PadSequence(), num_workers = 15)
+test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,collate_fn=PadSequence(),num_workers = 15)
 
+next(iter(train_dataloader))
 # %%
+import lightning as L
 import torch.nn as nn
-class Classifier(nn.Module):
-    def __init__(self, num_emb,hsize, nclasses):
+from torch import Tensor
+import math
+class PositionalEncoding(nn.Module):
+    def __init__(self,
+                 emb_size: int,
+                 dropout: float,
+                 maxlen: int = 20):
+        super(PositionalEncoding, self).__init__()
+
+        den = torch.exp(- torch.arange(0, emb_size, 2)* math.log(10000) / emb_size)
+        pos = torch.arange(0, maxlen).reshape(maxlen, 1)
+        pos_embedding = torch.zeros((maxlen, emb_size))
+        pos_embedding[:, 0::2] = torch.sin(pos * den)
+        pos_embedding[:, 1::2] = torch.cos(pos * den)
+        pos_embedding = pos_embedding.unsqueeze(-2)
+
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer('pos_embedding', pos_embedding)
+
+    def forward(self, token_embedding: Tensor):
+        return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+import torchmetrics
+class Classifier(L.LightningModule):
+    def __init__(self, num_emb,hsize, nclasses,dropout =0.1):
         super().__init__()
+        self.posenc = PositionalEncoding(emb_size=hsize,dropout=dropout)
         self.emb = nn.Embedding(num_emb,hsize)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=hsize, nhead=4, dropout = dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
         self.fc = nn.Sequential(nn.Linear(hsize, hsize//2),nn.ReLU(),nn.Linear(hsize//2,nclasses) , nn.Softmax(1))
+        self.criterion = torch.nn.CrossEntropyLoss(label_smoothing = 0.05)
+        self.accuracy = torchmetrics.classification.Accuracy(task="multiclass", num_classes=nclasses)
     def forward(self,x) :
-        return self.fc(self.emb(x))
+        pad_mask = (x== 0).transpose(0, 1)
+        emb = self.emb(x)
+        enc = self.transformer_encoder(emb,src_key_padding_mask = pad_mask)
+        enc = enc.mean(1)
+        return self.fc(enc)
     def predict(self, x)  : 
         return torch.argmax(self.forward(x),-1)
-    
-model = Classifier(len(vocab), 256, len(special_chars))
-# %%
-opt = torch.optim.Adam
-criterion = nn.CE
+    def training_step(self, batch):
+        x,y = batch
+        y = y.to(torch.long)
+        x_hat = self.forward(x)
+        loss = self.criterion(x_hat, y)
+        self.log("train_loss", loss, prog_bar = True)
 
+        return loss
+    def validation_step(self,batch) :
+        self.eval()
+        x,y = batch
+        y = y.to(torch.long)
+        x_hat = self.forward(x)
+        loss = self.criterion(x_hat, y)
+        self.log("val_loss", loss, prog_bar = True)
+        self.train()
+        predictions = torch.argmax(x_hat,-1)
+        self.log("accuracy", self.accuracy(predictions,y), prog_bar = True)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        return optimizer
+model = Classifier(encoder.vocab_size, 256, len(special_chars))
+for name, param in model.named_parameters():
+    if 'weight' in name and param.data.dim() == 2:
+        nn.init.kaiming_uniform_(param)
+# %%
+trainer = L.Trainer(max_epochs=30, devices = 1,log_every_n_steps=1)
+trainer.fit(model, train_dataloader, test_dataloader)
+
+# %%
+
+trainer.validate(model, test_dataloader)
+
+#%%
+from transformers import pipeline
+classifier = pipeline("zero-shot-classification", 
+                      model="mtheo/camembert-base-xnli", device = 0)
+
+candidate_labels = ['age',
+ 'date de naissance',
+ 'etat civil',
+ "niveau d'education",
+ 'employeur',
+ 'prenom',
+ 'lien',
+ 'job',
+ 'nom de jeune fille',
+ 'nationalité',
+ 'observation',
+ 'profession',
+ 'nom',
+ 'nom du ménage']
+preds,tgt = [],[]
+from tqdm import tqdm
+for x, y in tqdm(test_dataset) : 
+    x = x.numpy()
+    x = next(encoder.inverse_transform([x]))
+    if x =="" :
+        continue
+    preds.append(classifier(x, candidate_labels)['labels'][0])
+    tgt.append(y)
+#%%
+preds = [candidate_labels.index(u) for u in preds]
+# %%
+from torchmetrics import Accuracy, Recall, F1Score
+tgt, preds = torch.Tensor(tgt),torch.Tensor(preds)
+accuracy = Accuracy(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
+recall = Recall(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
+f1 = F1Score(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
+print("Accuracy:", accuracy)
+print("Recall:", recall)
+print("F1-score:", f1)
+# %%
