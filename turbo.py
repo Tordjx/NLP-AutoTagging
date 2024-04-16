@@ -113,7 +113,7 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, token_embedding: Tensor):
         return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
-import torchmetrics
+from torchmetrics import Accuracy, Recall, F1Score
 class Classifier(L.LightningModule):
     def __init__(self, num_emb,hsize, nclasses,dropout =0.1):
         super().__init__()
@@ -123,7 +123,9 @@ class Classifier(L.LightningModule):
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
         self.fc = nn.Sequential(nn.Linear(hsize, hsize//2),nn.ReLU(),nn.Linear(hsize//2,nclasses) , nn.Softmax(1))
         self.criterion = torch.nn.CrossEntropyLoss(label_smoothing = 0.05)
-        self.accuracy = torchmetrics.classification.Accuracy(task="multiclass", num_classes=nclasses)
+        self.accuracy = Accuracy(task="multiclass", num_classes=nclasses)
+        self.recall = Recall(task="multiclass", num_classes=nclasses)
+        self.f1score = F1Score(task="multiclass", num_classes=nclasses)
     def forward(self,x) :
         pad_mask = (x== 0).transpose(0, 1)
         emb = self.emb(x)
@@ -150,6 +152,8 @@ class Classifier(L.LightningModule):
         self.train()
         predictions = torch.argmax(x_hat,-1)
         self.log("accuracy", self.accuracy(predictions,y), prog_bar = True)
+        self.log("recall", self.recall(predictions,y), prog_bar = True)
+        self.log("f1score", self.f1score(predictions,y), prog_bar = True)
         return loss
 
     def configure_optimizers(self):
@@ -169,8 +173,10 @@ trainer.validate(model, test_dataloader)
 
 #%%
 from transformers import pipeline
+model_name = "facebook/bart-large-mnli" #beaucoup beaucoup mieux !!!!!!!
+#model_name = "mtheo/camembert-base-xnli"
 classifier = pipeline("zero-shot-classification", 
-                      model="mtheo/camembert-base-xnli", device = 0)
+                      model=model_name, device = 0)
 
 candidate_labels = ['age',
  'date de naissance',
@@ -179,7 +185,7 @@ candidate_labels = ['age',
  'employeur',
  'prenom',
  'lien',
- 'job',
+ 'travail',
  'nom de jeune fille',
  'nationalité',
  'observation',
@@ -198,7 +204,7 @@ for x, y in tqdm(test_dataset) :
 #%%
 preds = [candidate_labels.index(u) for u in preds]
 # %%
-from torchmetrics import Accuracy, Recall, F1Score
+
 tgt, preds = torch.Tensor(tgt),torch.Tensor(preds)
 accuracy = Accuracy(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
 recall = Recall(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
