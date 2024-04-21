@@ -123,9 +123,9 @@ class Classifier(L.LightningModule):
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
         self.fc = nn.Sequential(nn.Linear(hsize, hsize//2),nn.ReLU(),nn.Linear(hsize//2,nclasses) , nn.Softmax(1))
         self.criterion = torch.nn.CrossEntropyLoss(label_smoothing = 0.05)
-        self.accuracy = Accuracy(task="multiclass", num_classes=nclasses)
-        self.recall = Recall(task="multiclass", num_classes=nclasses)
-        self.f1score = F1Score(task="multiclass", num_classes=nclasses)
+        self.accuracy = Accuracy(task="multiclass", num_classes=nclasses, average = "weighted")
+        self.recall = Recall(task="multiclass", num_classes=nclasses, average = "weighted")
+        self.f1score = F1Score(task="multiclass", num_classes=nclasses, average = "weighted")
     def forward(self,x) :
         pad_mask = (x== 0).transpose(0, 1)
         emb = self.emb(x)
@@ -206,9 +206,9 @@ preds = [candidate_labels.index(u) for u in preds]
 # %%
 
 tgt, preds = torch.Tensor(tgt),torch.Tensor(preds)
-accuracy = Accuracy(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
-recall = Recall(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
-f1 = F1Score(task="multiclass", num_classes=len(pretty_names))(tgt, preds)
+accuracy = Accuracy(task="multiclass", num_classes=len(pretty_names), average = "weighted")(tgt, preds)
+recall = Recall(task="multiclass", num_classes=len(pretty_names), average = "weighted")(tgt, preds)
+f1 = F1Score(task="multiclass", num_classes=len(pretty_names), average = "weighted")(tgt, preds)
 print("Accuracy:", accuracy)
 print("Recall:", recall)
 print("F1-score:", f1)
