@@ -192,19 +192,23 @@ for name, param in model.named_parameters():
 trainer = L.Trainer(max_epochs=30, devices=1, log_every_n_steps=1)
 
 # Train the model
-trainer.fit(model, train_dataloader, test_dataloader)
+#trainer.fit(model, train_dataloader, test_dataloader)
 
 # Validate the model
 trainer.validate(model, test_dataloader)
 
 # Initialize zero-shot classification pipeline using a pre-trained model
-model_name = "facebook/bart-large-mnli"
-classifier = pipeline("zero-shot-classification", model=model_name, device=0, batch_size=512)
+model_name = "symanto/xlm-roberta-base-snli-mnli-anli-xnli"
+
+classifier = pipeline("zero-shot-classification", model=model_name,  device_map="auto", batch_size=512)
 
 # Define candidate labels
 candidate_labels = ['age', 'birth date', 'civil status', "education level", 'employer', 'first name', 'parental link',
                     'place of birth', 'maiden name', 'nationality', 'observation', 'occupation', 'surname',
                     'household name']
+"""candidate_labels = ['age', 'date de naissance', 'status marital', "niveau d'éducation", 'employeur', 'prénom', 'lien de parenté',
+                    'lieu de naissance', 'nom de jeune fille', 'nationalit"y"', 'observation', 'travail', 'nom de famille',
+                    'nom du ménage']"""
 preds, tgt = [], []
 
 # Perform zero-shot classification on test data
